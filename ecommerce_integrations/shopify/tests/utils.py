@@ -6,6 +6,7 @@ import frappe
 import shopify
 from erpnext import get_default_cost_center
 from frappe.tests import IntegrationTestCase
+from frappe.utils import add_to_date, now_datetime
 from pyactiveresource.activeresource import ActiveResource
 from pyactiveresource.testing import http_fake
 
@@ -43,15 +44,19 @@ class TestCase(IntegrationTestCase):
 
 		# Now setup Shopify settings with test data
 		with patch(
-			"ecommerce_integrations.shopify.doctype.shopify_setting.shopify_setting.ShopifySetting._handle_webhooks"
+			"ecommerce_integrations.shopify.doctype.shopify_setting.shopify_setting.ShopifySetting._sync_webhooks_after_update"
 		):
 			setting = frappe.get_doc(SETTING_DOCTYPE)
 
 			setting.update(
 				{
 					"enable_shopify": 1,
+					"api_version": API_VERSION,
 					"shopify_url": "frappetest.myshopify.com",
-					"password": "supersecret",
+					"client_id": "test-client-id",
+					"client_secret": "test-client-secret",
+					"access_token": "supersecret",
+					"access_token_expires_on": add_to_date(now_datetime(), days=1),
 					"shared_secret": "supersecret",
 					"default_customer": "_Test Customer",
 					"customer_group": "_Test Customer Group 1",
@@ -85,6 +90,8 @@ class TestCase(IntegrationTestCase):
 			).save(ignore_permissions=True)
 
 	def setUp(self):
+		self.setting = frappe.get_doc(SETTING_DOCTYPE)
+
 		ActiveResource.site = None
 		ActiveResource.headers = None
 

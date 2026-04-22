@@ -33,7 +33,6 @@ required_apps = ["frappe/erpnext"]
 
 # include js in doctype views
 doctype_js = {
-	"Shopify Settings": "public/js/shopify/old_settings.js",
 	"Sales Order": [
 		"public/js/unicommerce/sales_order.js",
 		"public/js/common/ecommerce_transactions.js",
@@ -161,9 +160,6 @@ scheduler_events = {
 	},
 }
 
-
-# bootinfo - hide old doctypes
-extend_bootinfo = "ecommerce_integrations.boot.boot_session"
 
 # Testing
 # -------

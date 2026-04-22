@@ -13,7 +13,7 @@ from ecommerce_integrations.controllers.setting import (
 	IntegrationWarehouse,
 	SettingController,
 )
-from ecommerce_integrations.shopify import connection
+from ecommerce_integrations.shopify import auth, connection, webhooks
 from ecommerce_integrations.shopify.constants import (
 	ADDRESS_ID_FIELD,
 	CUSTOMER_ID_FIELD,
@@ -23,12 +23,10 @@ from ecommerce_integrations.shopify.constants import (
 	ORDER_ITEM_DISCOUNT_FIELD,
 	ORDER_NUMBER_FIELD,
 	ORDER_STATUS_FIELD,
+	SUPPORTED_API_VERSIONS,
 	SUPPLIER_ID_FIELD,
 )
-from ecommerce_integrations.shopify.utils import (
-	ensure_old_connector_is_disabled,
-	migrate_from_old_connector,
-)
+from ecommerce_integrations.shopify.graphql import test_connection as test_shop_connection
 
 
 class ShopifySetting(SettingController):
@@ -36,11 +34,11 @@ class ShopifySetting(SettingController):
 		return bool(self.enable_shopify)
 
 	def validate(self):
-		ensure_old_connector_is_disabled()
-
 		if self.shopify_url:
-			self.shopify_url = self.shopify_url.replace("https://", "")
-		self._handle_webhooks()
+			self.shopify_url = auth.normalize_shop_url(self.shopify_url)
+		if not self.api_version:
+			self.api_version = SUPPORTED_API_VERSIONS.splitlines()[0]
+		auth.validate_settings(self)
 		self._validate_warehouse_links()
 		self._initalize_default_values()
 
@@ -48,26 +46,66 @@ class ShopifySetting(SettingController):
 			setup_custom_fields()
 
 	def on_update(self):
-		if self.is_enabled() and not self.is_old_data_migrated:
-			migrate_from_old_connector()
+		self._sync_webhooks_after_update()
 
-	def _handle_webhooks(self):
-		if self.is_enabled() and not self.webhooks:
-			new_webhooks = connection.register_webhooks(self.shopify_url, self.get_password("password"))
+	def _sync_webhooks_after_update(self):
+		if getattr(self.flags, "skip_webhook_sync", False):
+			return
 
-			if not new_webhooks:
-				msg = _("Failed to register webhooks with Shopify.") + "<br>"
-				msg += _("Please check credentials and retry.") + " "
-				msg += _("Disabling and re-enabling the integration might also help.")
-				frappe.throw(msg)
+		if frappe.flags.in_test:
+			return
 
-			for webhook in new_webhooks:
-				self.append("webhooks", {"webhook_id": webhook.id, "method": webhook.topic})
+		previous = self.get_doc_before_save()
+		was_enabled = bool(previous.enable_shopify) if previous else False
 
-		elif not self.is_enabled():
-			connection.unregister_webhooks(self.shopify_url, self.get_password("password"))
+		if not self.is_enabled():
+			if was_enabled:
+				webhooks.clear_setting_webhooks(self)
+				self._persist_webhook_state()
+			return
 
-			self.webhooks = list()  # remove all webhooks
+		if not auth.has_access_token(self):
+			return
+
+		if not self._requires_webhook_sync(previous):
+			return
+
+		active_webhooks = webhooks.sync_setting_webhooks(self)
+		self._persist_webhook_state()
+
+		if not active_webhooks:
+			msg = _("Failed to register webhooks with Shopify.") + "<br>"
+			msg += _("Please check credentials and retry.")
+			frappe.throw(msg)
+
+	def _requires_webhook_sync(self, previous=None) -> bool:
+		if not self.is_enabled():
+			return False
+
+		if not self.webhooks:
+			return True
+
+		if previous is None:
+			return True
+
+		for fieldname in (
+			"enable_shopify",
+			"shopify_url",
+			"shared_secret",
+			"api_version",
+			"client_id",
+		):
+			if getattr(previous, fieldname, None) != getattr(self, fieldname, None):
+				return True
+
+		return False
+
+	def _persist_webhook_state(self):
+		self.flags.skip_webhook_sync = True
+		try:
+			self.save(ignore_permissions=True)
+		finally:
+			self.flags.skip_webhook_sync = False
 
 	def _validate_warehouse_links(self):
 		for wh_map in self.shopify_warehouse_mapping:
@@ -77,6 +115,31 @@ class ShopifySetting(SettingController):
 	def _initalize_default_values(self):
 		if not self.last_inventory_sync:
 			self.last_inventory_sync = get_datetime("1970-01-01")
+
+	@frappe.whitelist()
+	def acquire_access_token(self):
+		payload = auth.fetch_access_token(self)
+		return {"scope": payload.get("scope"), "message": _("Shopify access token updated.")}
+
+	@frappe.whitelist()
+	def test_connection(self):
+		shop = test_shop_connection(self)
+		return {
+			"status": shop.get("status"),
+			"shop_id": shop.get("id"),
+			"shop_name": shop.get("name"),
+			"domain": shop.get("myshopifyDomain"),
+			"message": shop.get("message"),
+		}
+
+	@frappe.whitelist()
+	def sync_webhooks(self):
+		active_webhooks = webhooks.sync_setting_webhooks(self)
+		self._persist_webhook_state()
+		return {
+			"count": len(active_webhooks),
+			"message": _("Synchronized {0} Shopify webhooks.").format(len(active_webhooks)),
+		}
 
 	@frappe.whitelist()
 	@connection.temp_shopify_session

@@ -25,6 +25,41 @@ frappe.ui.form.on("Shopify Setting", {
 		});
 	},
 
+	test_shopify_connection: function (frm) {
+		frm.call("test_connection").then((r) => {
+			if (!r.exc && r.message) {
+				frappe.show_alert({
+					message: r.message.message,
+					indicator: "green",
+				});
+			}
+		});
+	},
+
+	acquire_shopify_access_token: function (frm) {
+		frm.call("acquire_access_token").then((r) => {
+			if (!r.exc && r.message) {
+				frappe.show_alert({
+					message: r.message.message,
+					indicator: "green",
+				});
+				frm.reload_doc();
+			}
+		});
+	},
+
+	sync_shopify_webhooks: function (frm) {
+		frm.call("sync_webhooks").then((r) => {
+			if (!r.exc && r.message) {
+				frappe.show_alert({
+					message: r.message.message,
+					indicator: "green",
+				});
+				frm.reload_doc();
+			}
+		});
+	},
+
 	refresh: function (frm) {
 		frm.add_custom_button(__("Import Products"), function () {
 			frappe.set_route("shopify-import-products");
