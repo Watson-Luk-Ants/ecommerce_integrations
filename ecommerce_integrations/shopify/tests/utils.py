@@ -51,7 +51,10 @@ class TestCase(IntegrationTestCase):
 				{
 					"enable_shopify": 1,
 					"shopify_url": "frappetest.myshopify.com",
-					"password": "supersecret",
+					"client_id": "test-client-id",
+					"client_secret": "test-client-secret",
+					"access_token": "test-access-token",
+					"access_token_expires_on": "2099-01-01 00:00:00",
 					"shared_secret": "supersecret",
 					"default_customer": "_Test Customer",
 					"customer_group": "_Test Customer Group 1",

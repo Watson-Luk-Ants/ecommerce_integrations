@@ -9,6 +9,7 @@ from frappe import _
 from shopify.resources import Webhook
 from shopify.session import Session
 
+from ecommerce_integrations.shopify import auth
 from ecommerce_integrations.shopify.constants import (
 	API_VERSION,
 	EVENT_MAPPER,
@@ -29,7 +30,7 @@ def temp_shopify_session(func):
 
 		setting = frappe.get_doc(SETTING_DOCTYPE)
 		if setting.is_enabled():
-			auth_details = (setting.shopify_url, API_VERSION, setting.get_password("password"))
+			auth_details = (setting.shopify_url, API_VERSION, auth.get_valid_access_token())
 
 			with Session.temp(*auth_details):
 				return func(*args, **kwargs)
@@ -37,14 +38,15 @@ def temp_shopify_session(func):
 	return wrapper
 
 
-def register_webhooks(shopify_url: str, password: str) -> list[Webhook]:
+def register_webhooks(shopify_url: str) -> list[Webhook]:
 	"""Register required webhooks with shopify and return registered webhooks."""
 	new_webhooks = []
+	access_token = auth.get_valid_access_token()
 
 	# clear all stale webhooks matching current site url before registering new ones
-	unregister_webhooks(shopify_url, password)
+	unregister_webhooks(shopify_url)
 
-	with Session.temp(shopify_url, API_VERSION, password):
+	with Session.temp(shopify_url, API_VERSION, access_token):
 		for topic in WEBHOOK_EVENTS:
 			webhook = Webhook.create({"topic": topic, "address": get_callback_url(), "format": "json"})
 
@@ -60,11 +62,12 @@ def register_webhooks(shopify_url: str, password: str) -> list[Webhook]:
 	return new_webhooks
 
 
-def unregister_webhooks(shopify_url: str, password: str) -> None:
+def unregister_webhooks(shopify_url: str) -> None:
 	"""Unregister all webhooks from shopify that correspond to current site url."""
 	url = get_current_domain_name()
+	access_token = auth.get_valid_access_token()
 
-	with Session.temp(shopify_url, API_VERSION, password):
+	with Session.temp(shopify_url, API_VERSION, access_token):
 		for webhook in Webhook.find():
 			if url in webhook.address:
 				webhook.destroy()
@@ -119,8 +122,7 @@ def process_request(data, event):
 
 
 def _validate_request(req, hmac_header):
-	settings = frappe.get_doc(SETTING_DOCTYPE)
-	secret_key = settings.shared_secret
+	secret_key = auth.get_webhook_secret()
 
 	sig = base64.b64encode(hmac.new(secret_key.encode("utf8"), req.data, hashlib.sha256).digest())
 

@@ -13,7 +13,7 @@ from ecommerce_integrations.controllers.setting import (
 	IntegrationWarehouse,
 	SettingController,
 )
-from ecommerce_integrations.shopify import connection
+from ecommerce_integrations.shopify import auth, connection
 from ecommerce_integrations.shopify.constants import (
 	ADDRESS_ID_FIELD,
 	CUSTOMER_ID_FIELD,
@@ -40,6 +40,7 @@ class ShopifySetting(SettingController):
 
 		if self.shopify_url:
 			self.shopify_url = self.shopify_url.replace("https://", "")
+		self._validate_authentication_details()
 		self._handle_webhooks()
 		self._validate_warehouse_links()
 		self._initalize_default_values()
@@ -51,9 +52,23 @@ class ShopifySetting(SettingController):
 		if self.is_enabled() and not self.is_old_data_migrated:
 			migrate_from_old_connector()
 
+	def _validate_authentication_details(self):
+		if not self.is_enabled():
+			return
+
+		for fieldname, label in (
+			("client_id", _("Client ID")),
+			("client_secret", _("Client Secret")),
+			("shared_secret", _("Webhook Secret")),
+		):
+			value = self.get_password(fieldname) if fieldname.endswith("secret") else self.get(fieldname)
+			if not value:
+				frappe.throw(_("{0} is required when Shopify is enabled.").format(label))
+
 	def _handle_webhooks(self):
 		if self.is_enabled() and not self.webhooks:
-			new_webhooks = connection.register_webhooks(self.shopify_url, self.get_password("password"))
+			auth.refresh_access_token(force=True, setting=self)
+			new_webhooks = connection.register_webhooks(self.shopify_url)
 
 			if not new_webhooks:
 				msg = _("Failed to register webhooks with Shopify.") + "<br>"
@@ -65,7 +80,8 @@ class ShopifySetting(SettingController):
 				self.append("webhooks", {"webhook_id": webhook.id, "method": webhook.topic})
 
 		elif not self.is_enabled():
-			connection.unregister_webhooks(self.shopify_url, self.get_password("password"))
+			if self.shopify_url and self.client_id and self.get_password("client_secret"):
+				connection.unregister_webhooks(self.shopify_url)
 
 			self.webhooks = list()  # remove all webhooks
 
